@@ -205,7 +205,6 @@ def main():
         
         return
     
-    st.success("✅ Model loaded successfully!")
     
     # Create symptom groups
     symptom_groups = create_symptom_groups(all_symptoms)
