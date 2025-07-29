@@ -1,22 +1,26 @@
+# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
 import tensorflow as tf
-import os
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
     page_title="Symptom Disease Classifier",
-    page_icon="🩺",
-    layout="wide"
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better appearance
+# Custom CSS for better styling
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
+        font-size: 3rem;
         color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
@@ -46,251 +50,188 @@ st.markdown("""
 @st.cache_resource
 def load_model_and_data():
     """Load the trained model and preprocessing objects"""
-    try:
-        # Load the MLP model
-        mlp_model = tf.keras.models.load_model('mlp_model.h5')
-        
-        # Load preprocessing objects
-        with open('scaler.pkl', 'rb') as f:
-            scaler = pickle.load(f)
-        
-        with open('label_encoder.pkl', 'rb') as f:
-            label_encoder = pickle.load(f)
-        
-        with open('symptoms.pkl', 'rb') as f:
-            all_symptoms = pickle.load(f)
-        
-        return mlp_model, scaler, label_encoder, all_symptoms
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        return None, None, None, None
+    # Load the MLP model
+    mlp_model = tf.keras.models.load_model('mlp_model.h5')
+    
+    # Load preprocessing objects
+    with open('scaler.pkl', 'rb') as f:
+        scaler = pickle.load(f)
+    
+    with open('label_encoder.pkl', 'rb') as f:
+        le = pickle.load(f)
+    
+    # Load symptom list
+    with open('symptoms.pkl', 'rb') as f:
+        all_symptoms = pickle.load(f)
+    
+    return mlp_model, scaler, le, all_symptoms
 
-def create_symptom_groups(all_symptoms):
-    """Create symptom groups for better organization"""
-    # Define symptom categories
-    groups = {
-        "General Symptoms": ["fever", "fatigue", "headache", "nausea", "vomiting", "dizziness", "weakness"],
-        "Respiratory": ["cough", "sore throat", "runny nose", "chest pain", "shortness of breath", "wheezing"],
-        "Digestive": ["abdominal pain", "diarrhea", "constipation", "bloating", "loss of appetite", "heartburn"],
-        "Skin": ["rash", "itching", "swelling", "redness", "blisters", "dry skin"],
-        "Musculoskeletal": ["joint pain", "back pain", "muscle pain", "stiffness", "swelling"],
-        "Neurological": ["numbness", "tingling", "seizures", "memory loss", "confusion"],
-        "Cardiovascular": ["chest pain", "irregular heartbeat", "high blood pressure", "palpitations"],
-        "Urinary": ["frequent urination", "painful urination", "blood in urine", "incontinence"]
-    }
+def get_predictions_with_confidence(mlp_model, symptoms, scaler, le, all_symptoms, top_k=3):
+    """Get top k predictions with confidence scores"""
+    # Convert symptoms to input vector
+    input_vector = [0] * len(all_symptoms)
+    for i, symptom in enumerate(all_symptoms):
+        if symptom in symptoms:
+            input_vector[i] = 1
     
-    # Filter groups to only include symptoms that exist in our dataset
-    filtered_groups = {}
-    for group_name, symptoms in groups.items():
-        filtered_symptoms = [s for s in symptoms if s in all_symptoms]
-        if filtered_symptoms:
-            filtered_groups[group_name] = filtered_symptoms
+    # Scale the input
+    input_scaled = scaler.transform([input_vector])
     
-    # Add remaining symptoms to "Other Symptoms"
-    used_symptoms = set()
-    for symptoms in filtered_groups.values():
-        used_symptoms.update(symptoms)
+    # Get predictions
+    proba = mlp_model.predict(input_scaled, verbose=0)
     
-    other_symptoms = [s for s in all_symptoms if s not in used_symptoms]
-    if other_symptoms:
-        filtered_groups["Other Symptoms"] = other_symptoms
+    # Get top k predictions
+    top_indices = np.argsort(proba[0])[-top_k:][::-1]
     
-    return filtered_groups
+    results = []
+    for idx in top_indices:
+        disease = le.inverse_transform([idx])[0]
+        conf = proba[0][idx]
+        results.append((disease, conf))
+    
+    return results, proba[0]
 
-def get_predictions_with_confidence(model, scaler, label_encoder, selected_symptoms, all_symptoms):
-    """Get predictions with confidence scores"""
-    try:
-        # Create input vector
-        input_vector = np.zeros(len(all_symptoms))
-        for symptom in selected_symptoms:
-            if symptom in all_symptoms:
-                idx = all_symptoms.index(symptom)
-                input_vector[idx] = 1
-        
-        # Reshape for model
-        input_vector = input_vector.reshape(1, -1)
-        
-        # Scale the input
-        input_scaled = scaler.transform(input_vector)
-        
-        # Get predictions
-        predictions = model.predict(input_scaled, verbose=0)
-        
-        # Get top 3 predictions
-        top_indices = np.argsort(predictions[0])[-3:][::-1]
-        
-        results = []
-        for i, idx in enumerate(top_indices):
-            disease = label_encoder.inverse_transform([idx])[0]
-            confidence = predictions[0][idx] * 100
-            results.append({
-                'disease': disease,
-                'confidence': confidence,
-                'rank': i + 1
-            })
-        
-        return results
-    except Exception as e:
-        st.error(f"Error making prediction: {e}")
-        return None
-
-# Main app
 def main():
-    st.markdown('<h1 class="main-header">🩺 Symptom Disease Classifier</h1>', unsafe_allow_html=True)
+    # Header
+    st.markdown('<h1 class="main-header">🏥 Symptom Disease Classifier</h1>', unsafe_allow_html=True)
     
-    # Load model and data
-    mlp_model, scaler, label_encoder, all_symptoms = load_model_and_data()
+    # Sidebar
+    st.sidebar.title("ℹ️ About This Project")
+    st.sidebar.markdown("""
+    **ML-Powered Symptom Analysis**
     
-    if mlp_model is None:
-        st.error("❌ Failed to load the model. Please check if all model files are present.")
-        st.info("Required files: mlp_model.h5, scaler.pkl, label_encoder.pkl, symptoms.pkl")
-        st.warning("⚠️ The app will work in demo mode without the ML model.")
-        
-        # Demo mode with sample symptoms
-        demo_symptoms = [
-            "fever", "headache", "fatigue", "cough", "sore throat",
-            "nausea", "vomiting", "abdominal pain", "diarrhea", "rash",
-            "joint pain", "back pain", "chest pain", "shortness of breath"
-        ]
-        
-        st.sidebar.header("🔍 Select Your Symptoms (Demo Mode)")
-        st.sidebar.write("Select at least 5 symptoms for demo prediction:")
-        
-        selected_symptoms = []
-        for symptom in demo_symptoms:
-            if st.sidebar.checkbox(symptom.replace('_', ' ').title(), key=f"demo_{symptom}"):
-                selected_symptoms.append(symptom)
-        
-        # Demo prediction
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.header("📋 Selected Symptoms")
-            if selected_symptoms:
-                symptom_text = ", ".join([s.replace('_', ' ').title() for s in selected_symptoms])
-                st.info(f"**{len(selected_symptoms)} symptoms selected:** {symptom_text}")
-                
-                st.header("🔍 Demo Prediction Results")
-                if len(selected_symptoms) < 5:
-                    st.warning("⚠️ Please select at least 5 symptoms for demo prediction.")
-                else:
-                    st.markdown('<div class="prediction-box">', unsafe_allow_html=True)
-                    st.markdown(f"### 🎯 **Demo Diagnosis**")
-                    st.markdown(f"**Disease:** Common Cold (Demo)")
-                    st.markdown(f"**Confidence:** <span class='confidence-medium'>75.5%</span>", unsafe_allow_html=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    st.markdown("### 🔍 **Demo Alternative Diagnoses**")
-                    st.markdown("**Flu** - 65.2% confidence")
-                    st.markdown("**Sinusitis** - 60.1% confidence")
-            else:
-                st.info("👈 Please select symptoms from the sidebar to get started.")
-        
-        with col2:
-            st.header("ℹ️ Demo Information")
-            st.write("""
-            **Demo Mode Active:**
-            - This is a demonstration without the ML model
-            - Add model files to enable real predictions
-            - Select at least 5 symptoms for demo
-            
-            **Note:** This is for educational purposes only.
-            """)
-            
-            if selected_symptoms:
-                st.metric("Symptoms Selected", len(selected_symptoms))
-                if len(selected_symptoms) >= 5:
-                    st.success("✅ Ready for demo prediction")
-                else:
-                    st.warning(f"⚠️ Need {5 - len(selected_symptoms)} more symptoms")
-        
+    This application uses a Multi-Layer Perceptron (MLP) neural network trained on medical symptom data to predict potential diseases based on user-reported symptoms.
+    
+    **Key Features:**
+    - 41 different diseases classified
+    - 132 symptoms analyzed
+    - 91.18% accuracy with partial symptoms
+    - Confidence-based predictions
+    
+    **Disclaimer:**
+    This tool is for educational purposes only. Always consult healthcare professionals for medical diagnosis.
+    """)
+    
+    # Load model
+    try:
+        mlp_model, scaler, le, all_symptoms = load_model_and_data()
+    except FileNotFoundError:
+        st.error("Model files not found. Please ensure all model files are in the same directory as this app.")
         return
     
-    
-    # Create symptom groups
-    symptom_groups = create_symptom_groups(all_symptoms)
-    
-    # Sidebar for symptom selection
-    st.sidebar.header("🔍 Select Your Symptoms")
-    st.sidebar.write("Select at least 5 symptoms for accurate prediction:")
-    
-    selected_symptoms = []
-    
-    # Create expandable sections for each symptom group
-    for group_name, symptoms in symptom_groups.items():
-        with st.sidebar.expander(f"📁 {group_name} ({len(symptoms)} symptoms)"):
-            for symptom in symptoms:
-                if st.checkbox(symptom.replace('_', ' ').title(), key=f"checkbox_{symptom}"):
-                    selected_symptoms.append(symptom)
-    
-    # Main content area
+    # Main content
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.header("📋 Selected Symptoms")
-        if selected_symptoms:
-            # Display selected symptoms
-            symptom_text = ", ".join([s.replace('_', ' ').title() for s in selected_symptoms])
-            st.info(f"**{len(selected_symptoms)} symptoms selected:** {symptom_text}")
-            
-            # Prediction section
-            st.header("🔍 Prediction Results")
-            
+        st.subheader("🔍 Symptom Selection")
+        st.markdown("Select the symptoms you are experiencing (minimum 5 required):")
+        
+        # Create symptom selection
+        selected_symptoms = []
+        
+        # Group symptoms for better organization
+        symptom_groups = {
+            "General Symptoms": [s for s in all_symptoms if any(word in s.lower() for word in ['fever', 'fatigue', 'pain', 'weakness', 'chills'])],
+            "Skin Symptoms": [s for s in all_symptoms if any(word in s.lower() for word in ['skin', 'rash', 'itching', 'blister', 'peeling'])],
+            "Respiratory Symptoms": [s for s in all_symptoms if any(word in s.lower() for word in ['cough', 'sneezing', 'breathing', 'chest'])],
+            "Digestive Symptoms": [s for s in all_symptoms if any(word in s.lower() for word in ['stomach', 'nausea', 'vomiting', 'diarrhea', 'acidity'])],
+            "Other Symptoms": [s for s in all_symptoms if s not in [s for group in [symptom_groups[k] for k in symptom_groups.keys()] for s in group]]
+        }
+        
+        for group_name, symptoms in symptom_groups.items():
+            if symptoms:  # Only show groups that have symptoms
+                st.markdown(f"**{group_name}:**")
+                cols = st.columns(3)
+                for i, symptom in enumerate(symptoms):
+                    col_idx = i % 3
+                    if cols[col_idx].checkbox(symptom, key=symptom):
+                        selected_symptoms.append(symptom)
+                st.markdown("---")
+        
+        # Prediction button
+        if st.button("🔍 Predict Disease", type="primary", use_container_width=True):
             if len(selected_symptoms) < 5:
-                st.warning("⚠️ Please select at least 5 symptoms for accurate prediction.")
+                st.error("❌ Please select at least 5 symptoms for prediction.")
             else:
                 # Get predictions
-                predictions = get_predictions_with_confidence(
-                    mlp_model, scaler, label_encoder, selected_symptoms, all_symptoms
+                top_predictions, all_proba = get_predictions_with_confidence(
+                    mlp_model, selected_symptoms, scaler, le, all_symptoms, top_k=3
                 )
                 
-                if predictions:
-                    # Display primary prediction
-                    primary = predictions[0]
-                    st.markdown('<div class="prediction-box">', unsafe_allow_html=True)
-                    st.markdown(f"### 🎯 **Primary Diagnosis**")
-                    st.markdown(f"**Disease:** {primary['disease']}")
-                    
-                    # Color-code confidence
-                    if primary['confidence'] >= 80:
-                        confidence_class = "confidence-high"
-                    elif primary['confidence'] >= 60:
-                        confidence_class = "confidence-medium"
-                    else:
-                        confidence_class = "confidence-low"
-                    
-                    st.markdown(f"**Confidence:** <span class='{confidence_class}'>{primary['confidence']:.1f}%</span>", 
-                              unsafe_allow_html=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Show alternative predictions if confidence is high enough
-                    if len(predictions) > 1:
-                        alternatives = [p for p in predictions[1:] if p['confidence'] >= 60]
-                        if alternatives:
-                            st.markdown("### 🔍 **Alternative Diagnoses**")
-                            st.markdown("*Showing only if confidence ≥ 60%*")
-                            
-                            for alt in alternatives:
-                                st.markdown(f"**{alt['disease']}** - {alt['confidence']:.1f}% confidence")
-        else:
-            st.info("👈 Please select symptoms from the sidebar to get started.")
+                # Display results
+                st.subheader("🎯 Prediction Results")
+                
+                # Primary prediction
+                primary_disease, primary_confidence = top_predictions[0]
+                
+                # Confidence color class
+                if primary_confidence >= 0.8:
+                    conf_class = "confidence-high"
+                    conf_emoji = "✅"
+                elif primary_confidence >= 0.6:
+                    conf_class = "confidence-medium"
+                    conf_emoji = "⚠️"
+                else:
+                    conf_class = "confidence-low"
+                    conf_emoji = "❓"
+                
+                st.markdown(f"""
+                <div class="prediction-box">
+                    <h3>{conf_emoji} Most Likely Diagnosis</h3>
+                    <h2>{primary_disease}</h2>
+                    <p class="{conf_class}">Confidence: {primary_confidence:.1%}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Alternative predictions (only if ≥60% confidence)
+                alternatives = [(disease, conf) for disease, conf in top_predictions[1:] if conf >= 0.6]
+                
+                if alternatives:
+                    st.markdown("**🤔 Other Possibilities (≥60% confidence):**")
+                    for disease, confidence in alternatives:
+                        st.markdown(f"• **{disease}** ({confidence:.1%})")
+                
+                # Recommendations
+                st.subheader("💡 Recommendations")
+                if len(selected_symptoms) < 10:
+                    st.info("📋 Consider adding more symptoms for better accuracy")
+                if primary_confidence < 0.7:
+                    st.warning("🏥 Consider consulting a healthcare professional")
+                st.success("✅ This tool is for educational purposes only")
     
     with col2:
-        st.header("ℹ️ Information")
-        st.write("""
-        **How to use:**
-        1. Select at least 5 symptoms from the sidebar
-        2. The model will predict the most likely disease
-        3. Alternative diagnoses are shown if confidence ≥ 60%
+        st.subheader("📊 Model Performance")
         
-        **Note:** This is for educational purposes only. Always consult a healthcare professional for medical advice.
-        """)
+        # Performance metrics
+        metrics_data = {
+            "Metric": ["Full Test Accuracy", "Partial Input Accuracy", "Diseases Classified", "Symptoms Analyzed"],
+            "Value": ["97.62%", "91.18%", "41", "132"]
+        }
         
+        st.dataframe(pd.DataFrame(metrics_data), use_container_width=True)
+        
+        # Confidence distribution chart
+        if 'all_proba' in locals():
+            st.subheader("📈 Confidence Distribution")
+            
+            # Create confidence distribution
+            conf_data = pd.DataFrame({
+                'Disease': [le.inverse_transform([i])[0] for i in range(len(all_proba))],
+                'Confidence': all_proba
+            }).sort_values('Confidence', ascending=False).head(10)
+            
+            fig = px.bar(conf_data, x='Confidence', y='Disease', 
+                        orientation='h', title="Top 10 Disease Probabilities")
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Selected symptoms count
         if selected_symptoms:
-            st.metric("Symptoms Selected", len(selected_symptoms))
-            if len(selected_symptoms) >= 5:
-                st.success("✅ Ready for prediction")
-            else:
-                st.warning(f"⚠️ Need {5 - len(selected_symptoms)} more symptoms")
+            st.subheader("📋 Selected Symptoms")
+            st.write(f"**Count:** {len(selected_symptoms)}")
+            st.write("**Symptoms:**")
+            for symptom in selected_symptoms:
+                st.write(f"• {symptom}")
 
 if __name__ == "__main__":
-    main()
+    main() 
