@@ -154,7 +154,7 @@ def main():
                 cols = st.columns(3)
                 for i, symptom in enumerate(symptoms):
                     col_idx = i % 3
-                    if cols[col_idx].checkbox(symptom, key=symptom):
+                    if cols[col_idx].checkbox(symptom, key=f"{group_name}_{symptom}"):
                         selected_symptoms.append(symptom)
                 st.markdown("---")
         
