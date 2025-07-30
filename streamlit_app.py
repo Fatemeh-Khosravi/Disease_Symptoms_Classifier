@@ -93,7 +93,7 @@ def get_predictions_with_confidence(mlp_model, symptoms, scaler, le, all_symptom
 
 def main():
     # Header
-    st.markdown('<h1 class="main-header">🏥 Symptom Disease Classifier</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🏥 AI Medical Diagnostic Assistant</h1>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("ℹ️ About This Project")
